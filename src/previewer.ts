@@ -1,89 +1,100 @@
-import * as http from "http";
-import * as URL from "url";
-import * as Path from "path";
+import * as LS from "./local-server";
 import * as fs from "fs";
 import socketIO = require("socket.io");
-function getMimeType(file) {
-	var i = file.lastIndexOf(".");
-	const mimeTypes = {
-		".bmp": "image/bmp",
-		".css": "text/css",
-		".gif": "image/gif",
-		".htm": "text/html",
-		".html": "text/html",
-		".jpg": "image/jpeg",
-		".jpeg": "image/jpeg",
-		".js": "application/javascript",
-		".json": "application/json",
-		".otf": "font/opentype",
-		".png": "image/png",
-		".text": "text/plain"
-	};
-	return mimeTypes[(i < 0 ? "" : file.substr(i)).toLowerCase()] || "unknown";
-}
-export var server: http.Server | undefined;
-export var socket: any;
-export var BasePath: string = "";
-export function run(port: number, basePath: string, log: (text: string) => void): false | string {
-	const replacer: (data: Buffer) => string = (_) => _.toString().replace("<!-- INSERT DEBUG CODE HERE -->", injectionCode);
-	server = http.createServer((req, res) => {
-		var url = URL.parse(req.url, true);
-		var path = decodeURIComponent(url.pathname);
-		if (path == "/") path += "index.html";
-		var fullPath = Path.join(basePath, path);
-		var logText = req.method + " " + path + " -> " + fullPath;
-		fs.exists(fullPath, (exists) => {
-			if (!exists) {
-				res.writeHead(404);
-				res.write("<h1>404 Not Found</h1>Requested: " + path + "<br>local file " + fullPath + " was not found.");
-				res.end();
-				logText += " :404";
-				log(logText);
-				return;
-			}
-			fs.readFile(fullPath, (err, data) => {
-				if (err) {
-					res.writeHead(500);
-					res.write("<h1>500 Internal Error</h1>Requested: " + path + "<br>local file: " + fullPath + "<br>Error: " + err.name + "<br><code>" + err.message + "</code>");
-					res.end();
-					logText += " :500 - " + err.name + " :: " + err.message;
-					log(logText);
-					return;
+import * as http from "http";
+import * as Path from "path";
+import { Watcher } from "./watcher";
+export class PreviewServer {
+	server: http.Server;
+	socket: socketIO.Server;
+	watcher: Watcher;
+	private _basePath = "";
+	get basePath() {
+		return this._basePath;
+	}
+	constructor(logger: (_: string) => void, basePath: string) {
+		this._basePath = basePath;
+		this.server = http.createServer(LS.Providers2ConnectionListener(logger,
+			LS.Providers.Sequential([
+				{
+					condition: (_1, _2, url) => url.endsWith(injectionSWPath),
+					_: LS.Providers.Constant(injectionSWCode, "application/javascript")
+				},
+				{
+					condition: () => true,
+					_: LS.Providers.LocalFile(basePath, (data, mime) => {
+						if (mime == "text/html") {
+							return data.toString().replace("<!-- INSERT DEBUG CODE HERE -->", injectionCode);
+						} else return data;
+					})
 				}
-				var mime = getMimeType(fullPath);
-				res.writeHead(200, { "content-type": mime });
-				res.write(mime == "text/html" ? replacer(data) : data);
-				res.end();
-				logText += " :200";
-				log(logText);
+			])));
+		this.socket = socketIO(this.server);
+		this.socket.on('connection', (socket) => {
+			console.log('a browser connected');
+			socket.on('disconnect', () => {
+				console.log('browser disconnected');
 			});
 		});
-	});
-	socket = socketIO(server);
-	socket.on('connection', (socket) => {
-		log('a browser connected');
-		socket.on('disconnect', () => {
-			console.log('browser disconnected');
-		});
-	});
-	server.listen(port);
-	BasePath = basePath;
-	return "http://localhost:" + port + "/";
+		this.watcher = new Watcher();
+	}
+	listen(port: number) {
+		this.server.listen(port);
+		this.watcher.start(this.basePath, (path) => this.reload(path));
+	}
+	/** If the server is already closed, cb will not be called. */
+	close(cb: () => void) {
+		this.server.close(cb);
+		this.socket.close();
+		this.watcher.stop();
+	}
+	reload(file: string) {
+		const path = Path.relative(this.basePath, file);
+		if (path.startsWith("..")) return;
+		const sentPath = Path.join("/", path);
+		this.socket.emit("reload-file", sentPath);
+	}
+	reloadAll() {
+		this.socket.emit("reload-all");
+	}
 }
-export function stop(cb: () => void) {
-	if (server) {
-		server.close(() => { server = undefined; cb() });
-	} else cb();
-}
-export function reload() {
-	socket.emit('reload');
-}
+
+const injectionSWPath = "vscode-html-live-preview-resources-sw.js";
 const injectionCode = `
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.0.4/socket.io.slim.js"></script>
 <script>
-	io = io.connect();
-	io.on('reload', (data)=> {
+(()=>{
+	var urls2reload = [location.pathname];
+	var io2 = io.connect();
+	io2.on('reload-all', ()=> {
 		location.reload();
 	});
+	var timer = Infinity;
+	io2.on('reload-file', (data)=> {
+		if (timer !== Infinity) clearTimeout(timer);
+		if(!urls2reload.some(_=>_==data))return;
+		timer = setTimeout(() => { timer=Infinity;location.reload(); }, 500);
+	});
+	navigator.serviceWorker.register('${injectionSWPath}').then(reg=> {
+		console.log('Registration succeeded. Scope is ' + reg.scope);
+	}).catch(error=> console.log('Registration failed with ' + error));
+	navigator.serviceWorker.addEventListener('message', event => {
+		if (event.data.url.startsWith(location.origin) && !event.data.url.startsWith(location.origin+"/socket.io/"))
+			urls2reload.push(event.data.url.substr(location.origin.length))
+	});
+})();
 </script>
-`
+`;
+const injectionSWCode = `
+this.addEventListener('fetch', (event) => {
+  event.waitUntil((async () => {
+    if (!event.clientId) return;
+    const client = await clients.get(event.clientId);
+    if (!client) return;
+    client.postMessage({
+      msg: "fetch-url",
+      url: event.request.url
+    });
+  })());
+});
+`;
