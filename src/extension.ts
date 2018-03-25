@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
 			context.subscriptions.push(vscode.commands.registerCommand(command, callback, thisArg));
 	// init
 	status.setContent("[html-preview]", undefined, "HTML Live Preview is now active.");
-	setTimeout(() => updateStatus(), 2000);
+	setTimeout(() => updateStatus(), 1000);
 	outPanel.item("HTML LivePreview");
 	outPanel.show("Start", ["Extension was Activated!"]);
 	context.subscriptions.push(status, outPanel, { dispose: () => !isWatching() || previewer == false ? 0 : previewer.close(() => 0) });
@@ -85,9 +85,9 @@ function stopWatching() {
 }
 function updateStatus() {
 	if (isWatching())
-		status.setContent("[Preview|On]", undefined, "[ENABLE] Preview HTML real time. Click to disable.", "htmlLivePreview.command.stopWatching");
+		status.setContent("$(eye):On", undefined, "[ENABLE] Preview HTML real time. Click to disable.", "htmlLivePreview.command.stopWatching");
 	else
-		status.setContent("[Preview|Off]", undefined, "[DISABLE] Preview HTML real time. Click to enable.", "htmlLivePreview.command.startWatching");
+		status.setContent("$(eye):Off", undefined, "[DISABLE] Preview HTML real time. Click to enable.", "htmlLivePreview.command.startWatching");
 }
 function launchServer(basePath: string, port: number) {
 	if (previewer) throw "ERROR";

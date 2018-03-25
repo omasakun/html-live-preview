@@ -11,6 +11,7 @@
         "Other"
     ],
     "activationEvents": [
+        "workspaceContains:**/*.html",
         "onCommand:htmlLivePreview.command.startWatching",
         "onCommand:htmlLivePreview.command.stopWatching",
         "onCommand:htmlLivePreview.command.reload",
