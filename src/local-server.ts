@@ -2,6 +2,7 @@ import * as http from "http";
 import * as URL from "url";
 import * as Path from "path";
 import * as fs from "fs";
+import * as MIME from "mime-types";
 /**Local Server Provider*/
 type LSProvider =
 	(logger: (_: string) => void, req: http.IncomingMessage, res: http.ServerResponse, url: string) => void
@@ -13,22 +14,7 @@ interface LocalServerOptions {
 	port: number
 }
 export function getMimeType(file) {
-	var i = file.lastIndexOf(".");
-	const mimeTypes = {
-		".bmp": "image/bmp",
-		".css": "text/css",
-		".gif": "image/gif",
-		".htm": "text/html",
-		".html": "text/html",
-		".jpg": "image/jpeg",
-		".jpeg": "image/jpeg",
-		".js": "application/javascript",
-		".json": "application/json",
-		".otf": "font/opentype",
-		".png": "image/png",
-		".text": "text/plain"
-	};
-	return mimeTypes[(i < 0 ? "" : file.substr(i)).toLowerCase()] || "unknown";
+	return MIME.lookup(file) || "unknown";
 }
 export namespace Providers {
 	export var Error: (errNo: number, msg: string) => (detail: string) => LSProvider
@@ -59,7 +45,7 @@ export namespace Providers {
 						return;
 					}
 					var mime = getMimeType(fullPath);
-					res.writeHead(200, { "content-type": mime });
+					res.writeHead(200, { "content-type": mime, "Cache-Control": "no-cache" });
 					res.write(replacer(data.toString(), mime));
 					res.end();
 					logger("200 :: " + url + " -> " + fullPath);

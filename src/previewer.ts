@@ -6,7 +6,7 @@ import * as Path from "path";
 import { Watcher } from "./watcher";
 export class PreviewServer {
 	server: http.Server;
-	socket: socketIO.Server;
+	socketServer: socketIO.Server;
 	watcher: Watcher;
 	private _basePath = "";
 	get basePath() {
@@ -29,11 +29,11 @@ export class PreviewServer {
 					})
 				}
 			])));
-		this.socket = socketIO(this.server);
-		this.socket.on('connection', (socket) => {
-			console.log('a browser connected');
+		this.socketServer = socketIO(this.server, { pingInterval: 2000, pingTimeout: 6000 });
+		this.socketServer.on('connection', (socket) => {
+			console.log('a browser connected: ' + socket.client.id);
 			socket.on('disconnect', () => {
-				console.log('browser disconnected');
+				console.log('browser disconnected: ' + socket.client.id);
 			});
 		});
 		this.watcher = new Watcher();
@@ -44,18 +44,18 @@ export class PreviewServer {
 	}
 	/** If the server is already closed, cb will not be called. */
 	close(cb: () => void) {
+		this.socketServer.close();
 		this.server.close(cb);
-		this.socket.close();
 		this.watcher.stop();
 	}
 	reload(file: string) {
 		const path = Path.relative(this.basePath, file);
 		if (path.startsWith("..")) return;
 		const sentPath = Path.join("/", path);
-		this.socket.emit("reload-file", sentPath);
+		this.socketServer.emit("reload-file", sentPath);
 	}
 	reloadAll() {
-		this.socket.emit("reload-all");
+		this.socketServer.emit("reload-all");
 	}
 }
 
@@ -73,7 +73,12 @@ const injectionCode = `
 	io2.on('reload-file', (data)=> {
 		if (timer !== Infinity) clearTimeout(timer);
 		if(!urls2reload.some(_=>_==data))return;
-		timer = setTimeout(() => { timer=Infinity;location.reload(); }, 500);
+		timer = setTimeout(() => { timer=Infinity;location.reload(); }, 300);
+	});
+	io2.on('disconnect', (data) => {7
+		setTimeout(() => {
+			location.reload();
+		}, 1000);
 	});
 	navigator.serviceWorker.register('${injectionSWPath}').then(reg=> {
 		console.log('Registration succeeded. Scope is ' + reg.scope);
